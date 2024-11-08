@@ -4,60 +4,107 @@
     <meta charset="UTF-8" />
     <title>Canvas 이미지 업로드 및 원 편집 도구</title>
     <style>
+      /* 전체 레이아웃 설정 */
       html,
       body {
         margin: 0;
         padding: 0;
         height: 100%;
         overflow: hidden;
-      }
-      #myCanvas {
-        position: absolute;
-        top: 0;
-        left: 0;
-        /* width and height will be set via JavaScript */
-      }
-      #controls {
-        position: fixed;
-        top: 10px;
-        left: 10px;
-        background: rgba(255, 255, 255, 0.9);
-        padding: 10px;
-        border-radius: 8px;
-        box-shadow: 0 0 10px rgba(0, 0, 0, 0.3);
-        z-index: 10;
-        max-width: 220px;
+        display: flex;
         font-family: Arial, sans-serif;
       }
+
+      /* 컨트롤 패널 스타일 */
+      #controls {
+        width: 400px; /* 초기 너비 400px */
+        min-width: 200px; /* 최소 너비 200px */
+        max-width: 600px; /* 최대 너비 600px */
+        height: 100vh; /* 전체 창 높이 */
+        background: rgba(255, 255, 255, 0.95);
+        padding: 20px; /* 패딩 유지 */
+        border-right: 1px solid #ccc;
+        box-shadow: 2px 0 5px rgba(0, 0, 0, 0.1);
+        box-sizing: border-box; /* 패딩과 보더 포함 */
+        overflow: hidden; /* 스크롤 제거 */
+        resize: horizontal; /* 브라우저 기본 리사이즈 기능 비활성화 */
+      }
+
+      /* 리사이저 스타일 */
+      #resizer {
+        width: 5px;
+        background: #ddd;
+        cursor: col-resize;
+        height: 100vh;
+        position: relative;
+        z-index: 1;
+      }
+
+      /* 캔버스 스타일 */
+      #myCanvas {
+        flex: 1; /* 남은 공간을 모두 차지 */
+        display: block; /* 인라인 요소의 여백 제거 */
+        background-color: #f0f0f0; /* 캔버스 배경색 (선택 사항) */
+      }
+
+      /* 컨트롤 패널 내 요소 스타일 */
       #controls button,
       #controls input[type="file"],
       #controls label,
-      #controls input[type="number"] {
-        margin: 5px 2px;
+      #controls input[type="number"],
+      #controls input[type="range"] {
+        margin: 8px 0; /* 마진 약간 증가 */
         font-size: 14px;
         width: 100%;
         box-sizing: border-box;
       }
+
       #controls label {
         display: flex;
         align-items: center;
         cursor: pointer;
       }
+
       #controls input[type="checkbox"] {
         margin-right: 5px;
       }
+
       hr {
-        margin: 10px 0;
+        margin: 15px 0; /* 마진 증가 */
         border: none;
         border-top: 1px solid #ccc;
+      }
+
+      /* 아크 정렬 컨트롤 숨기기 */
+      #arcControls {
+        display: none;
+        margin-top: 10px;
+      }
+
+      /* 스크롤바 스타일 (선택 사항) */
+      #controls::-webkit-scrollbar {
+        width: 8px;
+      }
+
+      #controls::-webkit-scrollbar-track {
+        background: #f1f1f1;
+      }
+
+      #controls::-webkit-scrollbar-thumb {
+        background: #888;
+        border-radius: 4px;
+      }
+
+      #controls::-webkit-scrollbar-thumb:hover {
+        background: #555;
       }
     </style>
   </head>
   <body>
-    <canvas id="myCanvas" tabindex="0"></canvas>
+    <!-- 컨트롤 패널 -->
     <div id="controls">
       <input type="file" id="imageLoader" name="imageLoader" accept="image/*" />
-      <button id="removeImage">이미지 제거</button>
+      <button id="removeImage" disabled>이미지 제거</button>
       <hr />
       <button id="alignLeft">좌측 정렬</button>
       <button id="alignRight">우측 정렬</button>
@@ -80,10 +127,41 @@
         <input type="number" id="gridSize" value="20" min="5" max="100" />
       </label>
       <hr />
+      <button id="distributeAlongArc">곡선 정렬</button>
+      <div id="arcControls">
+        <label>
+          중심 X:
+          <input type="number" id="arcCenterX" value="400" min="0" />
+        </label>
+        <label>
+          중심 Y:
+          <input type="number" id="arcCenterY" value="300" min="0" />
+        </label>
+        <label>
+          반지름:
+          <input type="number" id="arcRadius" value="150" min="10" />
+        </label>
+        <label>
+          시작 각도 (°):
+          <input type="number" id="arcStartAngle" value="0" min="0" max="360" />
+        </label>
+        <label>
+          끝 각도 (°):
+          <input type="number" id="arcEndAngle" value="180" min="0" max="360" />
+        </label>
+        <button id="applyArcDistribution">적용</button>
+      </div>
+      <hr />
       <button id="zoomIn">Zoom In (+)</button>
       <button id="zoomOut">Zoom Out (-)</button>
       <button id="resetZoom">Reset Zoom</button>
     </div>
+
+    <!-- 리사이저 -->
+    <div id="resizer"></div>
+
+    <!-- 캔버스 -->
+    <canvas id="myCanvas" tabindex="0"></canvas>
 
     <script>
       const canvas = document.getElementById("myCanvas");
@@ -114,6 +192,23 @@
       const toggleGridCheckbox = document.getElementById("toggleGrid");
       const toggleSnapCheckbox = document.getElementById("toggleSnap");
       const gridSizeInput = document.getElementById("gridSize");
+      const distributeAlongArcButton =
+        document.getElementById("distributeAlongArc");
+      const arcControls = document.getElementById("arcControls");
+      const applyArcDistributionButton = document.getElementById(
+        "applyArcDistribution"
+      );
+      const arcCenterXInput = document.getElementById("arcCenterX");
+      const arcCenterYInput = document.getElementById("arcCenterY");
+      const arcRadiusInput = document.getElementById("arcRadius");
+      const arcStartAngleInput = document.getElementById("arcStartAngle");
+      const arcEndAngleInput = document.getElementById("arcEndAngle");
+
+      // 리사이저 요소
+      const resizer = document.getElementById("resizer");
+      const controls = document.getElementById("controls");
+
+      let isResizing = false;
 
       // 이미지 로더 설정
       imageLoader.addEventListener("change", handleImage, false);
@@ -148,6 +243,41 @@
           alert("격자 크기는 5에서 100 사이의 값이어야 합니다.");
           this.value = gridSize;
         }
+      });
+
+      // 곡선 정렬 버튼 설정
+      distributeAlongArcButton.addEventListener("click", () => {
+        arcControls.style.display =
+          arcControls.style.display === "none" ? "block" : "none";
+      });
+
+      // 곡선 정렬 적용 버튼 설정
+      applyArcDistributionButton.addEventListener("click", () => {
+        const centerX = parseFloat(arcCenterXInput.value);
+        const centerY = parseFloat(arcCenterYInput.value);
+        const radius = parseFloat(arcRadiusInput.value);
+        const startAngleDeg = parseFloat(arcStartAngleInput.value);
+        const endAngleDeg = parseFloat(arcEndAngleInput.value);
+
+        if (
+          isNaN(centerX) ||
+          isNaN(centerY) ||
+          isNaN(radius) ||
+          isNaN(startAngleDeg) ||
+          isNaN(endAngleDeg)
+        ) {
+          alert("모든 곡선 매개변수를 올바르게 입력해주세요.");
+          return;
+        }
+
+        distributeAlongArc(
+          centerX,
+          centerY,
+          radius,
+          startAngleDeg,
+          endAngleDeg
+        );
+        arcControls.style.display = "none";
       });
 
       // 이미지 로딩 함수
@@ -542,6 +672,45 @@
         drawCanvas();
       }
 
+      // 곡선 정렬 함수
+      function distributeAlongArc(
+        centerX,
+        centerY,
+        radius,
+        startAngleDeg,
+        endAngleDeg
+      ) {
+        if (selectedCircles.length < 2) {
+          alert("곡선 정렬을 위해 최소 2개의 원을 선택해주세요.");
+          return;
+        }
+        saveState(); // 상태 저장
+
+        const startAngle = (startAngleDeg * Math.PI) / 180;
+        const endAngle = (endAngleDeg * Math.PI) / 180;
+        const angleRange = endAngle - startAngle;
+        const step =
+          selectedCircles.length > 1
+            ? angleRange / (selectedCircles.length - 1)
+            : 0;
+
+        selectedCircles.forEach((circle, index) => {
+          const angle = startAngle + step * index;
+          circle.x = centerX + radius * Math.cos(angle);
+          circle.y = centerY + radius * Math.sin(angle);
+        });
+
+        // 스냅 사용 시 격자에 맞춤
+        if (snapToGrid) {
+          selectedCircles.forEach((circle) => {
+            circle.x = Math.round(circle.x / gridSize) * gridSize;
+            circle.y = Math.round(circle.y / gridSize) * gridSize;
+          });
+        }
+
+        drawCanvas();
+      }
+
       // 버튼 이벤트 리스너 추가
       document.getElementById("alignLeft").addEventListener("click", alignLeft);
       document
@@ -582,8 +751,8 @@
 
       // 창 크기 조정 함수
       function resizeCanvas() {
-        canvas.width = window.innerWidth;
-        canvas.height = window.innerHeight;
+        canvas.width = canvas.clientWidth;
+        canvas.height = canvas.clientHeight;
         drawCanvas();
       }
 
@@ -600,6 +769,36 @@
         },
         { passive: false }
       );
+
+      // 리사이저 이벤트 핸들러
+      resizer.addEventListener("mousedown", function (e) {
+        e.preventDefault();
+        isResizing = true;
+
+        document.addEventListener("mousemove", handleMouseMove);
+        document.addEventListener("mouseup", handleMouseUp);
+      });
+
+      function handleMouseMove(e) {
+        if (!isResizing) return;
+
+        const bodyRect = document.body.getBoundingClientRect();
+        const newWidth = e.clientX - bodyRect.left;
+
+        // 최소 및 최대 너비 설정
+        if (newWidth >= 200 && newWidth <= 600) {
+          controls.style.width = newWidth + "px";
+          drawCanvas();
+        }
+      }
+
+      function handleMouseUp(e) {
+        if (isResizing) {
+          isResizing = false;
+          document.removeEventListener("mousemove", handleMouseMove);
+          document.removeEventListener("mouseup", handleMouseUp);
+        }
+      }
 
       // 초기 캔버스 크기 설정 및 그리기
       resizeCanvas();
