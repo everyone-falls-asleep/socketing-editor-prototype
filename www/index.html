@@ -27,8 +27,6 @@
         box-shadow: 2px 0 5px rgba(0, 0, 0, 0.1);
         box-sizing: border-box; /* 패딩과 보더 포함 */
         overflow-y: auto; /* 스크롤 추가 */
-        /* overflow: hidden; */ /* 제거됨 */
-        /* resize: horizontal; */ /* 브라우저 기본 리사이즈 기능 비활성화 */
       }
 
       /* 리사이저 스타일 */
@@ -53,7 +51,8 @@
       #controls input[type="file"],
       #controls label,
       #controls input[type="number"],
-      #controls input[type="range"] {
+      #controls input[type="range"],
+      #controls input[type="color"] {
         margin: 8px 0; /* 마진 약간 증가 */
         font-size: 14px;
         width: 100%;
@@ -153,6 +152,13 @@
         <button id="applyArcDistribution">적용</button>
       </div>
       <hr />
+      <!-- 색상 선택기 추가 -->
+      <label>
+        선택 색상:
+        <input type="color" id="colorPicker" value="#0000ff" />
+      </label>
+      <button id="applyColor" disabled>선택된 원에 색상 적용</button>
+      <hr />
       <button id="zoomIn">Zoom In (+)</button>
       <button id="zoomOut">Zoom Out (-)</button>
       <button id="resetZoom">Reset Zoom</button>
@@ -204,6 +210,10 @@
       const arcRadiusInput = document.getElementById("arcRadius");
       const arcStartAngleInput = document.getElementById("arcStartAngle");
       const arcEndAngleInput = document.getElementById("arcEndAngle");
+
+      // 색상 선택기 및 적용 버튼
+      const colorPicker = document.getElementById("colorPicker");
+      const applyColorButton = document.getElementById("applyColor");
 
       // 리사이저 요소
       const resizer = document.getElementById("resizer");
@@ -281,6 +291,9 @@
         arcControls.style.display = "none";
       });
 
+      // 색상 적용 버튼 설정
+      applyColorButton.addEventListener("click", applyColorToSelectedCircles);
+
       // 이미지 로딩 함수
       function handleImage(e) {
         const reader = new FileReader();
@@ -330,7 +343,13 @@
           y = Math.round(y / gridSize) * gridSize;
         }
         saveState(); // 상태 저장
-        circles.push({ x, y, radius: 15, selected: false });
+        circles.push({
+          x,
+          y,
+          radius: 15,
+          selected: false,
+          color: colorPicker.value, // 기본 색상 설정
+        });
         drawCanvas();
       }
 
@@ -367,9 +386,17 @@
         circles.forEach((circle) => {
           ctx.beginPath();
           ctx.arc(circle.x, circle.y, circle.radius, 0, 2 * Math.PI);
-          ctx.fillStyle = circle.selected ? "green" : "blue";
+          ctx.fillStyle = circle.color; // 원의 색상 사용
           ctx.fill();
-          ctx.strokeStyle = "black";
+
+          // 선택 여부에 따라 테두리 스타일 변경
+          if (circle.selected) {
+            ctx.strokeStyle = "red"; // 선택된 원의 테두리 색상
+            ctx.lineWidth = 3; // 선택된 원의 테두리 두께
+          } else {
+            ctx.strokeStyle = "black"; // 선택되지 않은 원의 테두리 색상
+            ctx.lineWidth = 1; // 선택되지 않은 원의 테두리 두께
+          }
           ctx.stroke();
         });
 
@@ -430,6 +457,7 @@
             }
           }
         });
+        updateApplyColorButton();
         drawCanvas();
       }
 
@@ -437,6 +465,22 @@
       function deselectAllCircles() {
         selectedCircles = [];
         circles.forEach((circle) => (circle.selected = false));
+        updateApplyColorButton();
+        drawCanvas();
+      }
+
+      // 색상 적용 버튼 활성화/비활성화 함수
+      function updateApplyColorButton() {
+        applyColorButton.disabled = selectedCircles.length === 0;
+      }
+
+      // 색상 적용 함수
+      function applyColorToSelectedCircles() {
+        if (selectedCircles.length === 0) return;
+        saveState(); // 상태 저장
+        selectedCircles.forEach((circle) => {
+          circle.color = colorPicker.value;
+        });
         drawCanvas();
       }
 
@@ -450,6 +494,7 @@
             // 선택된 원 삭제
             circles = circles.filter((circle) => !circle.selected);
             selectedCircles = [];
+            updateApplyColorButton();
             drawCanvas();
           }
         } else if (event.ctrlKey && key === "c") {
@@ -471,10 +516,12 @@
                 y: newY,
                 radius: circle.radius,
                 selected: true,
+                color: circle.color, // 색상 복사
               };
               circles.push(newCircle);
               selectedCircles.push(newCircle);
             });
+            updateApplyColorButton();
             drawCanvas();
           }
         } else if (event.ctrlKey && key === "z") {
@@ -497,6 +544,7 @@
               drawCanvas();
               updateRemoveImageButton();
             }
+            updateApplyColorButton();
           }
         }
       });
@@ -527,6 +575,7 @@
                 (c) => c !== clickedCircle
               );
             }
+            updateApplyColorButton();
             drawCanvas();
           } else if (clickedCircle.selected) {
             // 선택된 원 위를 클릭한 경우 이동 시작
@@ -541,6 +590,7 @@
             isMoving = true;
             offsetX = startX;
             offsetY = startY;
+            updateApplyColorButton();
             drawCanvas();
           }
         } else if (selectedCircles.length > 0 && !event.ctrlKey) {
@@ -749,6 +799,7 @@
 
       // 초기 버튼 상태 업데이트
       updateRemoveImageButton();
+      updateApplyColorButton();
 
       // 창 크기 조정 함수
       function resizeCanvas() {
