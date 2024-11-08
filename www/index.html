@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Canvas 이미지 업로드 및 원 편집 도구</title>
+    <style>
+      body {
+        margin: 0;
+        overflow: hidden;
+      }
+      #myCanvas {
+        display: block;
+        border: 1px solid #000000;
+      }
+      #controls {
+        position: fixed;
+        top: 10px;
+        left: 10px;
+        background: rgba(255, 255, 255, 0.8);
+        padding: 5px;
+        border-radius: 5px;
+        z-index: 10;
+      }
+      #controls button,
+      #controls input[type="file"] {
+        margin: 2px;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="myCanvas" width="800" height="600" tabindex="0"></canvas>
+    <div id="controls">
+      <input type="file" id="imageLoader" name="imageLoader" />
+      <button id="alignLeft">좌측 정렬</button>
+      <button id="alignRight">우측 정렬</button>
+      <button id="alignTop">상단 정렬</button>
+      <button id="alignBottom">하단 정렬</button>
+      <button id="distributeHorizontally">수평 분배</button>
+      <button id="distributeVertically">수직 분배</button>
+    </div>
+
+    <script>
+      const canvas = document.getElementById("myCanvas");
+      canvas.focus(); // Canvas에 포커스 설정
+      const ctx = canvas.getContext("2d");
+      let circles = [];
+      let selectedCircles = [];
+      let clipboard = []; // 클립보드 변수
+      let undoStack = []; // Undo 스택
+      let isSelecting = false;
+      let isMoving = false;
+      let startX, startY, currentX, currentY, offsetX, offsetY;
+      let backgroundImage = null; // 배경 이미지 변수
+
+      // 이미지 로더 설정
+      const imageLoader = document.getElementById("imageLoader");
+      imageLoader.addEventListener("change", handleImage, false);
+
+      function handleImage(e) {
+        const reader = new FileReader();
+        reader.onload = function (event) {
+          const img = new Image();
+          img.onload = function () {
+            backgroundImage = img;
+            drawCircles(); // 이미지 로드 후 캔버스 다시 그리기
+          };
+          img.src = event.target.result;
+        };
+        reader.readAsDataURL(e.target.files[0]);
+      }
+
+      // 상태 저장 함수
+      function saveState() {
+        const state = {
+          circles: circles.map((circle) => ({ ...circle })),
+          selectedCircles: selectedCircles.map((circle) => ({ ...circle })),
+        };
+        undoStack.push(state);
+        if (undoStack.length > 50) {
+          undoStack.shift();
+        }
+      }
+
+      // 원 생성 함수
+      function createCircle(x, y) {
+        saveState(); // 상태 저장
+        circles.push({ x, y, radius: 10, selected: false });
+        drawCircles();
+      }
+
+      // 모든 원 및 선택 박스 그리기
+      function drawCircles() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // 배경 이미지 그리기
+        if (backgroundImage) {
+          ctx.drawImage(backgroundImage, 0, 0, canvas.width, canvas.height);
+        }
+
+        for (const circle of circles) {
+          ctx.beginPath();
+          ctx.arc(circle.x, circle.y, circle.radius, 0, 2 * Math.PI);
+          ctx.fillStyle = circle.selected ? "green" : "blue";
+          ctx.fill();
+        }
+
+        // 선택 박스 그리기
+        if (isSelecting) {
+          ctx.strokeStyle = "red";
+          ctx.strokeRect(startX, startY, currentX - startX, currentY - startY);
+        }
+      }
+
+      // 선택된 원을 확인하는 함수
+      function selectCirclesInRect(x1, y1, x2, y2) {
+        if (!event.ctrlKey) {
+          deselectAllCircles();
+        }
+        for (const circle of circles) {
+          const { x, y } = circle;
+          if (x >= x1 && x <= x2 && y >= y1 && y <= y2) {
+            if (event.ctrlKey && circle.selected) {
+              circle.selected = false;
+              selectedCircles = selectedCircles.filter((c) => c !== circle);
+            } else {
+              circle.selected = true;
+              if (!selectedCircles.includes(circle)) {
+                selectedCircles.push(circle);
+              }
+            }
+          }
+        }
+        drawCircles();
+      }
+
+      // 모든 원의 선택 해제 함수
+      function deselectAllCircles() {
+        selectedCircles = [];
+        circles.forEach((circle) => (circle.selected = false));
+        drawCircles();
+      }
+
+      // 키 이벤트 핸들러 수정
+      document.addEventListener("keydown", (event) => {
+        const key = event.key.toLowerCase();
+
+        if (key === "delete" || key === "d") {
+          if (selectedCircles.length > 0) {
+            saveState(); // 상태 저장
+            // 선택된 원 삭제
+            for (const circle of selectedCircles) {
+              const index = circles.indexOf(circle);
+              if (index > -1) {
+                circles.splice(index, 1);
+              }
+            }
+            selectedCircles = [];
+            drawCircles();
+          }
+        } else if (event.ctrlKey && key === "c") {
+          // Ctrl+C: 선택된 원 복사
+          clipboard = selectedCircles.map((circle) => ({ ...circle }));
+        } else if (event.ctrlKey && key === "v") {
+          if (clipboard.length > 0) {
+            saveState(); // 상태 저장
+            // Ctrl+V: 원 붙여넣기
+            deselectAllCircles(); // 기존 선택 해제
+            const pastedCircles = clipboard.map((circle) => {
+              const newCircle = {
+                x: circle.x + 20, // 위치를 약간 이동
+                y: circle.y + 20,
+                radius: circle.radius,
+                selected: true, // 선택 상태로 설정
+              };
+              circles.push(newCircle);
+              selectedCircles.push(newCircle); // 선택된 원에 추가
+              return newCircle;
+            });
+            drawCircles();
+          }
+        } else if (event.ctrlKey && key === "z") {
+          // Ctrl+Z: Undo 기능
+          if (undoStack.length > 0) {
+            const prevState = undoStack.pop();
+            circles = prevState.circles.map((circle) => ({ ...circle }));
+            selectedCircles = [];
+            drawCircles();
+          }
+        }
+      });
+
+      canvas.addEventListener("mousedown", (event) => {
+        event.preventDefault(); // 기본 동작 방지
+        canvas.focus(); // Canvas에 포커스 설정
+        const rect = canvas.getBoundingClientRect();
+        startX = event.clientX - rect.left;
+        startY = event.clientY - rect.top;
+        currentX = startX;
+        currentY = startY;
+
+        const clickedCircle = circles.find(
+          (circle) =>
+            Math.sqrt((circle.x - startX) ** 2 + (circle.y - startY) ** 2) <
+            circle.radius
+        );
+
+        if (clickedCircle) {
+          if (event.ctrlKey) {
+            // Ctrl 키가 눌린 상태에서 클릭한 경우 선택 토글
+            clickedCircle.selected = !clickedCircle.selected;
+            if (clickedCircle.selected) {
+              selectedCircles.push(clickedCircle);
+            } else {
+              selectedCircles = selectedCircles.filter(
+                (c) => c !== clickedCircle
+              );
+            }
+            drawCircles();
+          } else if (clickedCircle.selected) {
+            // 선택된 원 위를 클릭한 경우 이동 시작
+            isMoving = true;
+            offsetX = startX;
+            offsetY = startY;
+          } else {
+            // 기존 선택 해제 후 새 선택
+            deselectAllCircles();
+            clickedCircle.selected = true;
+            selectedCircles = [clickedCircle];
+            isMoving = true;
+            offsetX = startX;
+            offsetY = startY;
+            drawCircles();
+          }
+        } else if (selectedCircles.length > 0 && !event.ctrlKey) {
+          // Ctrl 키가 눌리지 않은 상태에서 빈 공간을 클릭하면 선택 해제
+          deselectAllCircles();
+        } else {
+          // 선택 박스 드래그 시작
+          isSelecting = true;
+        }
+      });
+
+      canvas.addEventListener("mousemove", (event) => {
+        const rect = canvas.getBoundingClientRect();
+        currentX = event.clientX - rect.left;
+        currentY = event.clientY - rect.top;
+
+        if (isSelecting) {
+          drawCircles();
+        }
+
+        if (isMoving) {
+          const dx = currentX - offsetX;
+          const dy = currentY - offsetY;
+          selectedCircles.forEach((circle) => {
+            circle.x += dx;
+            circle.y += dy;
+          });
+          offsetX = currentX;
+          offsetY = currentY;
+          drawCircles();
+        }
+      });
+
+      canvas.addEventListener("mouseup", (event) => {
+        if (isSelecting) {
+          const x1 = Math.min(startX, currentX);
+          const y1 = Math.min(startY, currentY);
+          const x2 = Math.max(startX, currentX);
+          const y2 = Math.max(startY, currentY);
+          const dragDistance = Math.sqrt(
+            (currentX - startX) ** 2 + (currentY - startY) ** 2
+          );
+          if (dragDistance < 5) {
+            saveState(); // 상태 저장
+            createCircle(startX, startY);
+          } else {
+            selectCirclesInRect(x1, y1, x2, y2);
+          }
+          isSelecting = false;
+          drawCircles(); // 선택 박스 제거를 위해 다시 그리기
+        }
+        if (isMoving) {
+          saveState(); // 상태 저장
+        }
+        isMoving = false;
+      });
+
+      // 정렬 함수들 (이전 코드와 동일, 상태 저장 추가)
+      function alignLeft() {
+        if (selectedCircles.length === 0) return;
+        saveState(); // 상태 저장
+        const minX = Math.min(...selectedCircles.map((c) => c.x));
+        selectedCircles.forEach((circle) => {
+          circle.x = minX;
+        });
+        drawCircles();
+      }
+      function alignRight() {
+        if (selectedCircles.length === 0) return;
+        saveState(); // 상태 저장
+        const maxX = Math.max(...selectedCircles.map((c) => c.x));
+        selectedCircles.forEach((circle) => {
+          circle.x = maxX;
+        });
+        drawCircles();
+      }
+      function alignTop() {
+        if (selectedCircles.length === 0) return;
+        saveState(); // 상태 저장
+        const minY = Math.min(...selectedCircles.map((c) => c.y));
+        selectedCircles.forEach((circle) => {
+          circle.y = minY;
+        });
+        drawCircles();
+      }
+      function alignBottom() {
+        if (selectedCircles.length === 0) return;
+        saveState(); // 상태 저장
+        const maxY = Math.max(...selectedCircles.map((c) => c.y));
+        selectedCircles.forEach((circle) => {
+          circle.y = maxY;
+        });
+        drawCircles();
+      }
+      function distributeHorizontally() {
+        if (selectedCircles.length < 3) return;
+        saveState(); // 상태 저장
+        const sortedCircles = [...selectedCircles].sort((a, b) => a.x - b.x);
+        const minX = sortedCircles[0].x;
+        const maxX = sortedCircles[sortedCircles.length - 1].x;
+        const gap = (maxX - minX) / (sortedCircles.length - 1);
+        sortedCircles.forEach((circle, index) => {
+          circle.x = minX + gap * index;
+        });
+        drawCircles();
+      }
+      function distributeVertically() {
+        if (selectedCircles.length < 3) return;
+        saveState(); // 상태 저장
+        const sortedCircles = [...selectedCircles].sort((a, b) => a.y - b.y);
+        const minY = sortedCircles[0].y;
+        const maxY = sortedCircles[sortedCircles.length - 1].y;
+        const gap = (maxY - minY) / (sortedCircles.length - 1);
+        sortedCircles.forEach((circle, index) => {
+          circle.y = minY + gap * index;
+        });
+        drawCircles();
+      }
+
+      // 버튼 이벤트 리스너 추가
+      document.getElementById("alignLeft").addEventListener("click", alignLeft);
+      document
+        .getElementById("alignRight")
+        .addEventListener("click", alignRight);
+      document.getElementById("alignTop").addEventListener("click", alignTop);
+      document
+        .getElementById("alignBottom")
+        .addEventListener("click", alignBottom);
+      document
+        .getElementById("distributeHorizontally")
+        .addEventListener("click", distributeHorizontally);
+      document
+        .getElementById("distributeVertically")
+        .addEventListener("click", distributeVertically);
+    </script>
+  </body>
+</html>
